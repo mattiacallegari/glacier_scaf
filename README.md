@@ -22,15 +22,15 @@ Satellite processing runs in **Google Earth Engine (GEE)**. Time series are retu
 
 You need Python, a Jupyter environment, an Earth Engine-enabled account and Google Cloud project, and access to a glacier outline in Earth Engine. Keep `glacier_scaf.py` and the notebooks in the same directory, and run Jupyter from that directory.
 
-Create an environment and install the packages used by the code and notebooks:
+Install [Miniforge](https://conda-forge.org/download/) if Conda is not already available. From a terminal with Conda initialized (or the Miniforge Prompt on Windows), create a dedicated environment with all dependencies from **conda-forge**:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-# Windows: .venv\Scripts\activate
-python -m pip install earthengine-api geemap pandas numpy scipy matplotlib jupyterlab
+conda create --name glacier-scaf --override-channels --channel conda-forge python=3.11 earthengine-api geemap pandas numpy scipy matplotlib jupyterlab
+conda activate glacier-scaf
 jupyter lab
 ```
+
+Run `conda activate glacier-scaf` before starting Jupyter in subsequent sessions. To leave the environment, run `conda deactivate`.
 
 Authenticate and initialize Earth Engine **before importing `glacier_scaf`**:
 
