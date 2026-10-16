@@ -1,55 +1,55 @@
-# Glacier NIR and snow cover time series
+# Glacier snow cover fraction from Sentinel-1, Sentinel-2 and MODIS
 
-This repository packages the methods in the supplied MODIS, Sentinel-1, and Sentinel-2 notebooks as reusable Python functions. Calculations run on Google Earth Engine (EE); the functions return local `pandas.Series` indexed by UTC acquisition timestamps. The example notebook plots the 2019 melt season for Vernagtferner.
+Python and Jupyter implementation of the multi-sensor glacier snow-covered area fraction (SCAF) workflow described in:
+
+> Kim, D., Mattea, E., Callegari, M., Saks, T., Kenzhebayev, R., Azisov, E., Ullmann, T., Hoelzle, M., and Barandun, M.: **Sub-seasonal snowline dynamics of glaciers in Central Asia from multi-sensor satellite observations, 2000–2023**, EGUsphere [preprint], https://doi.org/10.5194/egusphere-2025-3978, 2025.
+
+The workflow derives glacier SCAF from Sentinel-1 radar and Sentinel-2 optical observations, then uses these estimates to calibrate an empirical relationship between MODIS mean near-infrared (NIR) reflectance and SCAF. Applying that relationship to the longer MODIS record supports high-frequency monitoring of snow depletion on glaciers.
+
+Satellite processing runs in **Google Earth Engine (GEE)**. Time series are returned as date-indexed `pandas.Series`; regression fitting and plotting run locally.
+
+## Repository contents
+
+| File | Purpose |
+| --- | --- |
+| [`glacier_scaf.py`](glacier_scaf.py) | Earth Engine extraction, Sentinel classification and snowline correction, and MODIS–Sentinel regression fitting. |
+| [`timeseries_extract.ipynb`](timeseries_extract.ipynb) | Extract and plot MODIS mean NIR and Sentinel-1/-2 SCAF for one glacier and a specific period. |
+| [`MODIS_SCAF_Sentinel_regression.ipynb`](MODIS_SCAF_Sentinel_regression.ipynb) | Extract MODIS mean NIR and Sentinel-1 and Sentinel-2 SCF for 2016–2023 and fit the MODIS NIR–SCAF relationship. |
+| [`MODIS_SCAF.ipynb`](MODIS_SCAF.ipynb) | Convert MODIS mean NIR to SCAF using specified regression coefficients. |
+
 
 ## Setup
 
-Python 3.10+ and an Earth Engine account with access to a Cloud project are required. Install dependencies:
+You need Python, a Jupyter environment, an Earth Engine-enabled account and Google Cloud project, and access to a glacier outline in Earth Engine. Keep `glacier_scaf.py` and the notebooks in the same directory, and run Jupyter from that directory.
+
+Create an environment and install the packages used by the code and notebooks:
 
 ```bash
-python -m pip install earthengine-api pandas matplotlib jupyter
+python -m venv .venv
+source .venv/bin/activate
+# Windows: .venv\Scripts\activate
+python -m pip install earthengine-api geemap pandas numpy scipy matplotlib jupyterlab
+jupyter lab
 ```
 
-Authenticate once, then initialize the EE client in each new Python session:
+Authenticate and initialize Earth Engine **before importing `glacier_scaf`**:
 
 ```python
 import ee
-# Run ee.Authenticate() once if you have not authenticated on this machine.
+
+ee.Authenticate()  # Run when credentials need to be established or renewed.
 ee.Initialize(project="YOUR_EARTH_ENGINE_PROJECT")
+
+from glacier_scaf import MODIS_meanNIR, SCAF_S1, SCAF_S2, fit_scaf_regression
 ```
 
-Run `jupyter notebook example_2019.ipynb` from this directory and replace the project placeholder. Internet access and EE permissions are needed to execute the notebook; calculations may take several minutes and very long periods may exceed EE computation or response quotas.
+Replace `YOUR_EARTH_ENGINE_PROJECT` in each notebook with your project ID. The project must be configured for Earth Engine and your account must have permission to use it. See the [Earth Engine Python installation and authentication guide](https://developers.google.com/earth-engine/guides/python_install).
 
-## API
+## Function reference
 
-```python
-from glacier_timeseries import MODIS_meanNIR, SCAF_S2, SCAF_S1, SLA_correction
-
-outline = ee.FeatureCollection("GLIMS/current").filter(
-    ee.Filter.eq("glac_id", "G010823E46875N")
-).sort("src_date", False).first().geometry()
-
-nir = MODIS_meanNIR("2019-06-01", "2019-09-30", outline)
-s2 = SCAF_S2("2019-06-01", "2019-09-30", outline,
-             th_min=3500, th_max=5000, th_fixed=4500)
-s1 = SCAF_S1("2019-06-01", "2019-09-30", outline)
-```
-
-| Function | Result | Method |
-| --- | --- | --- |
-| `MODIS_meanNIR(start_date, end_date, glacier_outline)` | Series of MOD09GQ band 2 native reflectance integers (roughly 0–10000) | MOD09GA 1 km QA cloud state excludes cloud and missing data; requires ≥75% valid 250 m glacier pixels. |
-| `SCAF_S2(start_date, end_date, glacier_outline, th_min, th_max, th_fixed, SLA_filetr=True)` | Series of snow fraction in percent (0–100) | Sentinel-2 L1C harmonized B8, cloud probability ≤40 and ≤10% clouds over glacier, SCS+C terrain correction, per-scene Otsu threshold with fixed fallback. Thresholds use native B8 digital numbers. |
-| `SCAF_S1(start_date, end_date, glacier_outline, SLA_filetr=True)` | Series of wet snow fraction in percent (0–100) | Sentinel-1 ascending IW VV/VH, each orbit compared with its January winter reference; average difference <−6 dB at 50 m indicates wet snow. |
-| `SLA_correction(SC_map)` | `ee.Image` with corrected `classification` band and `sla`, `scafAfter` properties | Shared elevation bin algorithm. See below for input requirements. |
-
-`glacier_outline` accepts an `ee.Geometry`, `ee.Feature`, or `ee.FeatureCollection`. Dates are **inclusive**. The series include acquisition times, so multiple same-day acquisitions remain distinct. Missing measurements and S1 scenes with no winter reference are omitted; the output is an empty float Series when no scenes qualify. `SLA_filetr` is spelled as requested in the API; set it to `False` to omit SLA correction.
-
-For a direct call to `SLA_correction`, supply an `ee.Image` with a `classification` band (snow=1, ice=0, missing pixels masked) and properties `glacier_geometry` (`ee.Geometry`), `sensor` (`"S1"` or `"S2"`), and `analysis_scale` (metres). For S2 also supply `scf_glacier` as a percentage. The result is lazy: call `getInfo()` or export it to evaluate it. An absent qualifying snowline leaves the classification unchanged and sets `sla=-9999`.
-
-SLA follows three consecutive 25 m altitude bins containing at least 50% snow. Above a margin of 20% of the glacier elevation range, S1 and S2 can reclassify ice as snow. Below that margin S1 can also reclassify snow as ice. The S2 upper correction runs only when uncorrected SCAF is at least 25%, following its source notebook.
-
-## Notes on the source notebooks
-
-The notebooks include hardcoded tiles, glacier IDs, dates, export paths, and exploratory cells. This module takes a glacier geometry and dates instead and performs no exports. It preserves the core datasets and classification steps. MODIS cloud screening uses a valid-pixel fraction in place of the notebook's pixel-grid selection and one-cloud-pixel rule; S1 uses January 5 in each scene's year rather than the notebook's fixed January 2019 reference. The S2 scene filter accepts any intersecting MGRS tile, making the API usable beyond the source example. Scenes may repeat across tiles or orbits.
-
-The original notebooks are provided separately as reference material. This example has not been run against a live Earth Engine project here; cloud availability, GLIMS collection access, and computational limits depend on your EE account.
+| Function | Return value |
+| --- | --- |
+| `MODIS_meanNIR(glacier_outline, date_start, date_end)` | Sorted, date-indexed `pandas.Series` of scaled mean NIR reflectance, with rejected values represented as `NaN`. |
+| `SCAF_S1(start_date, end_date, glacier_outline, orbit)` | Per-acquisition, date-indexed SCAF percentages, named `scaf_S1`. |
+| `SCAF_S2(start_date, end_date, glacier_outline, th_min, th_max, th_fixed, tile)` | Per-acquisition, date-indexed SCAF percentages, named `scaf_S2`. |
+| `fit_scaf_regression(modis_nir, s1_scaf, s2_scaf)` | Tuple of Python floats `(a, b)`. Fitting itself makes no Earth Engine requests. |
