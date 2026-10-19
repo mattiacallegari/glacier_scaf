@@ -411,8 +411,12 @@ def SCAF_S2(start_date, end_date, glacier_outline, th_min, th_max, th_fixed, til
         .filter(ee.Filter.eq('areaIntersect', s2.first().get('areaIntersect')))
     
     all_dates = s2_cloudfree.aggregate_array('system:index')
-    unique_dates = ee.List(all_dates.iterate(_removeSameDate,[all_dates.get(0)])).slice(1) \
-        .filter(ee.Filter.neq('item','duplicate'))
+    # unique_dates = ee.List(all_dates.iterate(_removeSameDate,[all_dates.get(0)])).slice(1) \
+    #     .filter(ee.Filter.neq('item','duplicate'))
+    unique_dates = ee.List(all_dates.slice(1).iterate(
+        _removeSameDate, [all_dates.get(0)]
+    )
+                          ).filter(ee.Filter.neq('item', 'duplicate'))
     s2_filtered = s2_cloudfree.filter(ee.Filter.inList('system:index', unique_dates)).select('B8')
     
     s2_tc = s2_filtered.map(_topoCorr_IC_L4toL8_nasa)
