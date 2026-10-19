@@ -349,8 +349,11 @@ def _removeSameDate(current, previousResult):
 def _s2_cloud_percent_glacier(s2, glacier_outline):
     #s2 = s2.clip(glacier_outline)
     # Load the cloud probability image relative to s2
-    s2_cloud = ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY") \
-    .filterMetadata('system:index', 'equals', s2.id()).first()
+    s2_cloud = (
+        ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY")
+        .filter(ee.Filter.eq('system:index', s2.get('system:index')))
+        .first()
+    )
     
     # Cloud mask from cloud probability
     cloud_mask = s2_cloud.gt(40)
@@ -401,11 +404,24 @@ def SCAF_S1(start_date, end_date, glacier_outline, orbit):
 
 def SCAF_S2(start_date, end_date, glacier_outline, th_min, th_max, th_fixed, tile):
 
-    s2 = ee.ImageCollection("COPERNICUS/S2_HARMONIZED").filterDate(start_date, end_date) \
-        .filterBounds(glacier_outline) \
-        .filter(ee.Filter.eq('MGRS_TILE', tile)) \
-        .filter(ee.Filter.neq('system:index', '20220801T055651_20220801T055645_T43SCD')) \
+    cloud_probability = (
+        ee.ImageCollection("COPERNICUS/S2_CLOUD_PROBABILITY")
+        .filterDate(start_date, end_date)
+        .filterBounds(glacier_outline)
+    )
+    
+    s2 = (
+        ee.ImageCollection("COPERNICUS/S2_HARMONIZED")
+        .filterDate(start_date, end_date)
+        .filterBounds(glacier_outline)
+        .filter(ee.Filter.eq('MGRS_TILE', tile))
+        .filter(ee.Filter.neq('system:index', '20220801T055651_20220801T055645_T43SCD'))
+        .filter(ee.Filter.inList(
+            'system:index',
+            cloud_probability.aggregate_array('system:index')
+        ))
         .map(lambda img: _s2_cloud_percent_glacier(img, glacier_outline))
+    )
 
     s2_cloudfree = s2.filter(ee.Filter.lte('cloud_percent_glacier', 10)) \
         .filter(ee.Filter.eq('areaIntersect', s2.first().get('areaIntersect')))
