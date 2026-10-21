@@ -608,3 +608,83 @@ def fit_scaf_regression(modis_nir, s1_scaf, s2_scaf):
     except (RuntimeError, ValueError, OptimizeWarning) as exc:
         raise ValueError(f"Could not fit SCAF regression coefficients: {exc}") from exc
     return float(coefficients[0]), float(coefficients[1])
+
+
+def snowline_altitude(glacier_outline, scaf):
+    """Estimate snowline altitude in metres.
+
+    Parameters
+    ----------
+    glacier_outline : ee.Geometry, ee.Feature, or ee.FeatureCollection
+        Glacier boundary.
+    scaf : float
+        Snow-covered area fraction, between 0 and 1.
+
+    Returns
+    -------
+    float
+        Estimated SLA. For full snow cover, returns the minimum elevation;
+        for no snow cover, returns the maximum elevation as a boundary value.
+
+    Assumes snow occupies the glacier above a single elevation threshold.
+    Uses getInfo(), so call this outside Earth Engine server-side map().
+    """
+    scaf = float(scaf)
+    if not 0 <= scaf <= 1:
+        raise ValueError("scaf must be between 0 and 1.")
+
+    geometry = (
+        glacier_outline
+        if isinstance(glacier_outline, ee.Geometry)
+        else glacier_outline.geometry()
+    )
+
+    dem = ee.Image("NASA/NASADEM_HGT/001").select("elevation")
+
+    # Equal-area grid: pixel counts represent glacier area fractions.
+    region_args = dict(
+        geometry=geometry,
+        crs="SR-ORG:6974",
+        scale=30,
+        maxPixels=1e9,
+        tileScale=4,
+    )
+
+    limits = dem.reduceRegion(
+        reducer=ee.Reducer.minMax(),
+        **region_args,
+    ).getInfo()
+
+    z_min = limits.get("elevation_min")
+    z_max = limits.get("elevation_max")
+    if z_min is None or z_max is None:
+        raise ValueError("No valid NASADEM elevations inside the outline.")
+
+    if scaf == 1:
+        return float(z_min)
+    if scaf == 0:
+        return float(z_max)
+
+    # Upper histogram limit is exclusive; include the maximum elevation.
+    lower = math.floor(z_min)
+    upper = math.floor(z_max) + 1
+
+    histogram = dem.reduceRegion(
+        reducer=ee.Reducer.fixedHistogram(
+            min=lower,
+            max=upper,
+            steps=upper - lower,  # 1 m elevation bins
+            cumulative=True,
+        ),
+        **region_args,
+    ).get("elevation").getInfo()
+
+    total = histogram[-1][1]
+    target = (1 - scaf) * total
+
+    # First elevation bin reaching the snow-free area fraction.
+    for elevation, cumulative_count in histogram:
+        if cumulative_count >= target:
+            return float(elevation)
+
+    return float(z_max)
